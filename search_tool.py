@@ -6,12 +6,11 @@
 
 ★ 默认方案：必应（bing）—— 完全不需要任何 API Key，一行配置即可联网。
 
-支持五种后端，按优先级自动选择：
+支持四种后端，按优先级自动选择：
   1. bing     —— 【默认·免 API Key】抓取 cn.bing.com 搜索结果页，国内可用（推荐）
   2. tavily   —— 专为 AI Agent 设计的搜索 API，免费额度 1000 次/月（进阶可选，质量更高）
   3. bocha    —— 博查搜索，国内可直连，按次计费（进阶可选）
-  4. duckduckgo —— 免注册兜底，但国内网络基本连不上，详见说明
-  5. mock     —— 离线演示，返回假数据，让朋友零成本先看效果
+  4. mock     —— 离线演示，返回假数据，让朋友零成本先看效果
 
 ⚠️ 关于「免 Key 方案」的取舍（重要）
   真正"不用搜索 API"的可行做法只有「抓搜索结果页」，本项目内置了必应：
@@ -24,14 +23,16 @@
             ③ 不符合对方使用条款，别用于正式产品
     - 结论：学习、Demo、个人低频使用完全够用；线上服务请用 Tavily / 博查
 
-  DuckDuckGo（duckduckgo）：实测不可用 ❌
-    1) 网络：duckduckgo.com 与 api.duckduckgo.com 在中国大陆无法访问，
-       实测直接返回连接失败（curl 得到 000）
-    2) 接口性质：用的是 Instant Answer API —— 它不是搜索引擎，
-       而是「百科摘要」接口：只返回某词条的 Abstract 和 RelatedTopics。
-       对本项目这种查询（「广州 昆明 机票 9月30日 价格」）通常返回空结果。
+  ❌ DuckDuckGo 已彻底移除（连降级分支一起删）：
+     国内连不上（curl 得到 000），且免 Key 只能走 Instant Answer API ——
+     那是「百科摘要」接口不是搜索引擎，对「广州 昆明 机票价格」这类查询返回空。
+     留着它只会让人配了 duckduckgo 拿到空结果，还以为是模型不会搜。
 
   百度 / 维基百科：实测不可用（百度返回反爬页，维基被网络限制）
+
+⚠️ 填了不认识的 SEARCH_PROVIDER（如残留的 duckduckgo）不会报错，
+   而是**静默降级成 mock 演示假数据** —— 改完配置请用 /api/status
+   确认 "search" 字段是不是 "bing"。
 """
 
 import html
@@ -82,14 +83,6 @@ def search(query: str, max_results: int = 5):
                 return r
         except Exception as e:
             print(f"[search] bing 失败，降级：{e}")
-
-    if provider in ("auto", "duckduckgo"):
-        try:
-            r = _duckduckgo(query)
-            if r["results"]:
-                return r
-        except Exception as e:
-            print(f"[search] duckduckgo 失败，降级：{e}")
 
     return _mock(query)
 
@@ -170,35 +163,6 @@ def _bocha(query, max_results):
             for p in pages[:max_results]
         ],
     }
-
-
-def _duckduckgo(query):
-    r = requests.get(
-        "https://api.duckduckgo.com/",
-        params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
-        timeout=TIMEOUT,
-    )
-    r.raise_for_status()
-    d = r.json()
-    out = []
-    if d.get("AbstractText"):
-        out.append(
-            {
-                "title": d.get("Heading") or query,
-                "url": d.get("AbstractURL", ""),
-                "snippet": d["AbstractText"][:400],
-            }
-        )
-    for t in d.get("RelatedTopics", [])[:4]:
-        if isinstance(t, dict) and t.get("Text"):
-            out.append(
-                {
-                    "title": t["Text"].split(" - ")[0][:60],
-                    "url": t.get("FirstURL", ""),
-                    "snippet": t["Text"][:400],
-                }
-            )
-    return {"provider": "duckduckgo", "results": out}
 
 
 def _mock(query):

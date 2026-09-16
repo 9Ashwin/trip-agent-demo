@@ -43,6 +43,7 @@ from langchain_openai import ChatOpenAI
 
 import search_tool
 import errlog
+import llm_config
 
 SYSTEM_PROMPT = """你是【家庭旅行规划顾问】。
 
@@ -112,25 +113,16 @@ FINALIZE_HINT = (
 def _build_llm(session_id: str = ""):
     """构造 LangChain 的 Chat 模型。
 
-    有些网关（如 OpenCode Go）除了 API Key 之外还有额外要求，用环境变量配置：
-      LLM_USER_AGENT     —— 标识自己的客户端，不要用通用 SDK 名（OpenCode Go 明确要求）
-      LLM_SESSION_HEADER —— 需要为每段会话发送稳定 session id 时，填头名称
-                            （OpenCode Go 是 x-opencode-session）
+    网关、模型名、base_url、额外请求头全部交给 llm_config 统一解析 ——
+    因为**不同网关的模型名不通用**（opencode 是 deepseek-v4.1-flash，
+    DeepSeek 官方是 deepseek-flash），写错会直接 400，见 llm_config.py 顶部说明。
     """
-    headers = {}
-    ua = os.getenv("LLM_USER_AGENT")
-    if ua:
-        headers["User-Agent"] = ua
-    session_header = os.getenv("LLM_SESSION_HEADER")
-    if session_header:
-        headers[session_header] = session_id or str(uuid.uuid4())
-
     return ChatOpenAI(
-        api_key=os.getenv("LLM_API_KEY"),
-        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
-        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        api_key=llm_config.api_key(),
+        base_url=llm_config.base_url(),
+        model=llm_config.model(),
         temperature=0.3,
-        default_headers=headers or None,
+        default_headers=llm_config.headers(session_id) or None,
     )
 
 

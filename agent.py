@@ -18,6 +18,7 @@ import uuid
 from openai import OpenAI
 
 import search_tool
+import llm_config
 
 SYSTEM_PROMPT = """你是【家庭旅行规划顾问】。
 
@@ -96,23 +97,14 @@ MAX_ROUNDS = int(os.getenv("MAX_SEARCH_ROUNDS", "15"))
 def _client(session_id: str = ""):
     """构造大模型客户端。
 
-    有些网关（如 OpenCode Go）除了 API Key 之外还有额外要求，用环境变量配置：
-      LLM_USER_AGENT     —— 标识自己的客户端，不要用通用 SDK 名（OpenCode Go 明确要求）
-      LLM_SESSION_HEADER —— 需要为每段会话发送稳定 session id 时，填头名称
-                            （OpenCode Go 是 x-opencode-session）
+    网关、模型名、base_url、额外请求头统一由 llm_config 解析 ——
+    不同网关的模型名不通用（opencode: deepseek-v4.1-flash，
+    DeepSeek 官方: deepseek-flash），写错直接 400，详见 llm_config.py。
     """
-    headers = {}
-    ua = os.getenv("LLM_USER_AGENT")
-    if ua:
-        headers["User-Agent"] = ua
-    session_header = os.getenv("LLM_SESSION_HEADER")
-    if session_header:
-        headers[session_header] = session_id or str(uuid.uuid4())
-
     return OpenAI(
-        api_key=os.getenv("LLM_API_KEY"),
-        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
-        default_headers=headers or None,
+        api_key=llm_config.api_key(),
+        base_url=llm_config.base_url(),
+        default_headers=llm_config.headers(session_id) or None,
     )
 
 
@@ -134,7 +126,7 @@ def run_agent(payload: dict, emit):
     # 每段会话一个稳定 id，便于网关做路由与 prompt 缓存
     session_id = str(uuid.uuid4())
     client = _client(session_id)
-    model = os.getenv("LLM_MODEL", "deepseek-chat")
+    model = llm_config.model()
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

@@ -346,7 +346,10 @@ const MD = (window.marked && typeof marked.parse === 'function')
 if (window.marked && window.marked.setOptions) marked.setOptions({ breaks:true, gfm:true });
 
 /* 模式检测 */
-const PROV_LABEL = { bing:'必应搜索(免Key)', tavily:'Tavily', bocha:'博查', duckduckgo:'DuckDuckGo', mock:'演示数据' };
+/* 顶栏徽章只认后端 /api/status 报的名字，不在前端硬编码模型名 ——
+   两家网关的模型名不通用（opencode: deepseek-v4.1-flash，DeepSeek 官方: deepseek-flash），
+   前端再抄一份迟早会跟后端对不上。 */
+const PROV_LABEL = { bing:'必应搜索(免Key)', tavily:'Tavily', bocha:'博查', mock:'演示数据' };
 fetch('/api/status').then(r=>r.json()).then(s=>{
   const b = $('modeBadge');
   if (s.mock) {
@@ -355,8 +358,10 @@ fetch('/api/status').then(r=>r.json()).then(s=>{
   } else {
     const prov = PROV_LABEL[s.search] || s.search;
     const limit = s.rate_limit > 0 ? ' · ' + s.rate_limit + ' 次/小时' : '';
+    const gw = s.provider_label ? s.provider_label + ' · ' : '';
     b.className = 'badge live';
-    b.innerHTML = '<span class="dot"></span>真实模式 · ' + s.model + ' · ' + prov + limit;
+    b.innerHTML = '<span class="dot"></span>真实模式 · ' + gw + s.model + ' · ' + prov + limit;
+    b.title = '网关：' + (s.provider_label || '?') + '（' + (s.provider || '?') + '）\n模型：' + s.model;
   }
 }).catch(()=>{
   $('modeBadge').innerHTML = '<span class="dot"></span>后端未连接';
@@ -414,7 +419,7 @@ function markAllDone(){
   document.querySelectorAll('#steps .step.run').forEach(finish);
 }
 
-const PROV_NAME = { bing:'必应', tavily:'Tavily', bocha:'博查', duckduckgo:'DuckDuckGo', mock:'演示数据' };
+const PROV_NAME = { bing:'必应', tavily:'Tavily', bocha:'博查', mock:'演示数据' };
 
 /* 兜底网：前端一旦有未捕获异常（Promise 里抛的最容易被浏览器静默吞掉），
    也要把错误摆到用户脸上，绝不允许页面永远停在「运行中」转圈。 */

@@ -261,20 +261,48 @@ document.querySelector('#steps .step').outerHTML
 >
 > **搜索默认就是免 Key 的必应抓取 —— 所以你只需要配一个模型 Key。**
 >
-> | 场景 | 模型 | 搜索 | 成本 |
+> | 场景 | 网关 + 模型 | 搜索 | 成本 |
 > |---|---|---|---|
-> | **默认（本项目出厂配置）** | **DeepSeek 官方** `deepseek-chat` | **必应抓取（免 Key）** | 模型按量约 ¥0.7/百万 token，几乎可忽略 |
+> | **本项目出厂配置** | **OpenCode Go** `deepseek-v4.1-flash` | **必应抓取（免 Key）** | 订阅 $10/月，随便跑 |
+> | **按量计费** | **DeepSeek 官方** `deepseek-flash` | **必应抓取（免 Key）** | 约 ¥0.7/百万 token，几乎可忽略 |
 > | **零成本** | 智谱 `glm-4-flash`（永久免费） | **必应抓取（免 Key）** | **0 元** |
-> | **要更稳更准**（可选升级） | DeepSeek 官方 `deepseek-chat` | Tavily（免费 1000 次/月） | 同上 |
+> | **要更稳更准**（可选升级） | 任意上面一种 | Tavily（免费 1000 次/月） | 同上 |
 >
-> **DeepSeek 官方的最简配置**（复制进 `.env` 即可，搜索一行都不用改）：
+> **配置只需要两步：选网关 + 填对应 Key。** 模型名不要手写，代码会按网关自动带出——
+> 因为**两家的模型名并不通用**（见下面「⚠️ 模型名陷阱」）。
 >
 > ```
-> LLM_API_KEY=sk-你的deepseek密钥
-> LLM_BASE_URL=https://api.deepseek.com
-> LLM_MODEL=deepseek-chat
+> # 用 DeepSeek 官方
+> LLM_PROVIDER=deepseek
+> DEEPSEEK_API_KEY=sk-你的deepseek密钥
 > SEARCH_PROVIDER=bing
 > ```
+>
+> ```
+> # 用 OpenCode Go 订阅
+> LLM_PROVIDER=opencode
+> OPENCODE_API_KEY=你的opencode密钥
+> SEARCH_PROVIDER=bing
+> ```
+>
+> #### ⚠️ 模型名陷阱（本项目最容易踩的坑之一）
+>
+> | 网关 | 可用的模型名 |
+> |---|---|
+> | OpenCode Go | `deepseek-v4.1-flash` |
+> | DeepSeek 官方 | `deepseek-flash`、`deepseek-v4-pro` |
+>
+> **两边的名字不通用。** 把 `deepseek-v4.1-flash` 填给 DeepSeek 官方，不会有任何
+> 「你要找的是不是 xxx」的提示，而是直接 400：
+>
+> ```
+> The supported API model names are deepseek-flash, deepseek-v4-pro,
+> but you passed deepseek-v4.1-flash.
+> ```
+>
+> 所以本项目把「网关 → 默认模型名」绑死在 `llm_config.py` 里，
+> `.env` 只填 `LLM_PROVIDER`。想用别的网关（智谱/硅基流动等）再手动
+> 覆盖 `LLM_BASE_URL` + `LLM_MODEL` 两项。
 >
 > 注册地址：https://platform.deepseek.com （新用户送免费额度）
 > 优点：**原生支持 function calling**，中文强，OpenAI 接口兼容，零适配成本。
@@ -291,9 +319,10 @@ document.querySelector('#steps .step').outerHTML
 | 百度千帆 | `ernie-speed-128k` | 永久免费 | 需实名认证 |
 | 腾讯混元 | `hunyuan-lite` | 永久免费 | 生态内方便 |
 
-**智谱的填法**（复制进 `.env`）：
+**智谱的填法**（复制进 `.env`。它不在内置网关表里，所以要手动覆盖地址和模型名）：
 
 ```
+LLM_PROVIDER=deepseek          # 借一个槽位，下面三项全部手动覆盖
 LLM_API_KEY=你的智谱key
 LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
 LLM_MODEL=glm-4-flash
@@ -301,42 +330,49 @@ LLM_MODEL=glm-4-flash
 
 > 去 https://open.bigmodel.cn 注册 → 「API Keys」生成。
 
-**想效果更好、愿意花点小钱？用 DeepSeek**（中文强，¥0.7/百万 token，最低一档）：
+**想效果更好、愿意花点小钱？用 DeepSeek 官方**（中文强，¥0.7/百万 token，最低一档）：
 
 ```
-LLM_API_KEY=sk-你的key
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-chat
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-你的key
 ```
+
+> 模型名不用写：`llm_config.py` 会按网关带出 `deepseek-flash`。
 
 **⚠️ 选模型时必须确认一件事：支持 function calling（工具调用）。**
 本项目靠它让模型「指挥后端去搜索」，不支持的话模型永远不会调用 `web_search`。
 GLM-4-Flash、DeepSeek、GPT-4o-mini、Qwen 系列都支持；一些小模型或老模型可能不支持。
 
-> 其余平台只要兼容 OpenAI 接口格式，改 `LLM_BASE_URL` 和 `LLM_MODEL` 就行。
+> 其余平台只要兼容 OpenAI 接口格式，覆盖 `LLM_BASE_URL` 和 `LLM_MODEL` 就行。
 
 #### 方案 D：OpenCode Go 套餐（$10/月，开源编码模型）
 
 [OpenCode Go](https://opencode.ai/docs/go/) 是订阅制的模型网关，走 `/zen/go/v1`。
-它有两个**额外要求**（不加会被拒），本项目已用环境变量支持：
+它有两个**额外要求**（不加会被拒），本项目已内置处理好，`.env` 里只需要两行：
 
 ```
-LLM_API_KEY=你的opencode key
-LLM_BASE_URL=https://opencode.ai/zen/go/v1
-LLM_MODEL=deepseek-v4.1-flash
-LLM_USER_AGENT=trip-agent-demo/1.0      # 必须标识自己的客户端，不能用通用 SDK 名
-LLM_SESSION_HEADER=x-opencode-session   # 每段会话要发稳定 session id
+LLM_PROVIDER=opencode
+OPENCODE_API_KEY=你的opencode key
 ```
+
+`base_url` / 模型名 `deepseek-v4.1-flash` / `User-Agent` / `x-opencode-session` 头
+全部由 `llm_config.py` 按网关自动带出，不用手写。
 
 **两个容易踩的坑：**
 1. **模型 ID 必须是带小数点的** —— `deepseek-v4.1-flash`（DeepSeek V4.1 Flash）和
-   `deepseek-v4-flash`（DeepSeek V4 Flash）是**两个不同的模型**，写错了会 400/404
+   `deepseek-v4-flash`（DeepSeek V4 Flash）是**两个不同的模型**，写错了会 400/404。
+   顺便：这个带小数点的名字**只在 OpenCode Go 有效**，DeepSeek 官方没有它，
+   填给官方会直接 400 —— 见上面「⚠️ 模型名陷阱」。
 2. **缺 `x-opencode-session` 会直接 400**：`MissingSessionID ... cannot be routed efficiently`。
-   `agent.py` 里每次请求会生成一个 uuid 作为会话 id
+   `llm_config.headers()` 会在每次请求时生成一个会话 id，也可由调用方传入固定值
 
 > ⚠️ OpenCode Go 官方说明它「面向 OpenCode 等编码智能体，会监测异常流量」。
 > 拿它跑通用网站属于超出设计用途，**自行评估风险**，别做公开服务。
 > 当前可用模型列表：`curl https://opencode.ai/zen/go/v1/models`
+
+> 💡 **两家怎么选**：OpenCode Go 是订阅制，跑多少次都不额外花钱，适合反复调试；
+> DeepSeek 官方是按量计费，单价极低但没有月费，适合偶尔用。两家都支持工具调用，
+> 切换只需要改 `.env` 里的 `LLM_PROVIDER`（**Key 和模型名都会跟着换，不会串**）。
 
 ### 第 2 步：搜索 —— 默认免 Key，开箱即用
 
@@ -380,12 +416,16 @@ TAVILY_API_KEY=tvly-你的key
 > 注意：`SEARCH_PROVIDER` 一旦显式写成 `tavily`，就必须有 Key；
 > 想「有 Key 就用、没 Key 自动回落必应」，填 `auto`。
 
-#### ❌ 已废弃：DuckDuckGo（实测不可用，别再试了）
+#### ❌ DuckDuckGo：已从代码中删除
 
-代码里保留了 DDG 兜底，但实测有**双重问题**：
+原本有个 DDG 兜底分支，实测两条路都走不通，现已连降级分支一起删掉：
+国内连不上（`curl` 得到 `000`，而同一环境 `tavily.com` 302、`baidu.com` 200，
+说明是被针对性阻断）；且免 Key 只能走 Instant Answer API ——
+那是「百科摘要」接口而非搜索引擎，对「广州 昆明 机票价格」这类查询返回空。
 
-1. **网络不通** —— `duckduckgo.com` 与 `api.duckduckgo.com` 在国内无法访问，实测连接直接失败（`curl` 得到 `000`）。注意不是沙箱问题：同一环境下 `tavily.com` 返回 302、`baidu.com` 返回 200，说明是被针对性阻断。
-2. **接口性质不对** —— 免 Key 只能用 Instant Answer API，它是「百科摘要」接口（返回词条 Abstract 和 RelatedTopics），**不是搜索引擎**。对「广州 昆明 机票 9月30日 价格」这类查询通常返回空。
+> ⚠️ 现在填了不认识的 `SEARCH_PROVIDER`（比如历史配置残留的 `duckduckgo`）
+> **不会报错**，而是静默降级成 mock 演示假数据。改完配置请用
+> `GET /api/status` 确认 `"search"` 字段是 `"bing"`。
 
 > **为什么「用 langchain 之类的库」解决不了？**
 > LangChain 本身不是搜索引擎，它只是**包装器**。它提供的搜索工具底层要么需要 API Key
@@ -419,11 +459,16 @@ TAVILY_API_KEY=tvly-你的key
 | `app.py` | Flask 服务：托管页面 + `/api/plan` 接口 + SSE 实时推送 |
 | `agent_langchain.py` | **核心（默认）**：LangChain v1 `create_agent` 版 Agent 循环 |
 | `agent.py` | **核心（后备）**：原生 OpenAI SDK 手写版 Agent 循环 |
-| `search_tool.py` | 搜索工具层，默认免 Key 必应，五路自动降级 |
+| `llm_config.py` | **模型接入配置**：网关 → base_url / 模型名 / 额外请求头的唯一出处 |
+| `search_tool.py` | 搜索工具层，默认免 Key 必应，三路自动降级（bing → tavily/bocha → mock） |
 | `mock_agent.py` | 演示模式，无需 Key 也能跑通全流程 |
+| `errlog.py` | 把最近一次异常留在内存里，供 `/api/debug` 远程取堆栈 |
 | `static/index.html` | 前端工作台（单文件，无框架依赖） |
 | `.env.example` | 配置模板，复制成 `.env` 后填 |
 | `run.sh` | 一键启动 |
+
+> `llm_config.py` 存在的唯一理由：**两家网关的模型名不通用**。
+> 把「网关 → 模型名」绑在代码里，`.env` 只填网关名，就不可能配串。
 
 ---
 
@@ -474,8 +519,13 @@ TAVILY_API_KEY=tvly-你的key
 
 线上沙箱里没有你的 `.env`。想让**在线版**也能真实联网搜索：
 
-1. 在本地把 `LLM_API_KEY` 填进 `.env`（搜索保持 `SEARCH_PROVIDER=bing` 即可）
+1. 在本地把模型 Key 填进 `.env` —— 两行就够，`LLM_PROVIDER` + 对应的 Key 变量
+   （搜索保持 `SEARCH_PROVIDER=bing` 即可）
 2. 重新发布一次（覆盖线上版本）
+
+> 部署后用 `GET /api/status` 或 `GET /api/debug` 确认 `provider` / `model`
+> 是你在用的那家 —— 两家模型名不通用，配串了会直接 400。
+> 页面右上角的徽章也会显示「真实模式 · 网关名 · 模型名」。
 
 > 也就是说：**GitHub 上的代码永远不需要带任何 Key**（模型 Key 只放本地/部署环境），
 > 而**部署环境可以带 Key**（那才是真正要调用模型的地方）。两边搜索行为完全一致 —— 都是免 Key 必应。
@@ -528,11 +578,15 @@ TAVILY_API_KEY=tvly-你的key
 |---|---|---|
 | POST 请求返回 **403** | macOS 的 5000 端口被 AirPlay 接收器占用 | 用 5050 端口（本项目已默认） |
 | 页面上方一直是「后端未连接」 | 后端没启动 | 先跑 `./run.sh` |
-| 一直返回「演示数据」 | 没配 `LLM_API_KEY` | 填 `.env` 后重启 |
-| 搜索结果很少 | 用了 DuckDuckGo（国内不通 / 是百科接口） | 配 Tavily 或博查，见第四节 |
-| 模型不调用搜索 | 模型不支持 function calling | 换 deepseek-chat / gpt-4o-mini 等 |
+| 一直返回「演示数据」 | 没配模型 Key | 填 `LLM_PROVIDER` + 对应 Key（`OPENCODE_API_KEY` / `DEEPSEEK_API_KEY`），然后重启 |
+| **400 `invalid_request_error`，提示 supported model names** | **模型名和网关配串了**（最常见：把 `deepseek-v4.1-flash` 填给了 DeepSeek 官方） | 别手写模型名，只填 `LLM_PROVIDER`；用 `GET /api/debug` 核对 `provider` + `model` |
+| **400 `MissingSessionID`** | 走 OpenCode Go 但缺 `x-opencode-session` 头 | 已内置自动补齐；如果你是手工拼请求，见 `llm_config.headers()` |
+| 搜索结果很少 | 用了 DuckDuckGo（国内不通 / 是百科接口）—— 该分支已删除 | 用默认必应，或配 Tavily / 博查，见第四节 |
+| 搜索结果全是「[演示数据]」 | `SEARCH_PROVIDER` 填了不认识的值，静默降级成 mock | `GET /api/status` 确认 `"search"` 是 `"bing"` |
+| 模型不调用搜索 | 模型不支持 function calling | 换 `deepseek-flash` / `glm-4-flash` / `gpt-4o-mini` 等 |
 | 页面提示「请求太频繁」**429** | 触发了按 IP 限流 | 把 `RATE_LIMIT_PER_HOUR` 设为 `0` 关闭 |
-| **页面永远停在「运行中」** | 连接被反向代理按 60 秒超时掐断，且前端没收到结束事件 | 见上式「单次规划比较慢」；本项目已加 SSE 心跳 + 中断检测，重试一次通常能过 |
+| 页面永远停在「运行中」，**按钮却自己复位了** | 前端脚本抛异常被 `unhandledrejection` 静默吞掉（后端其实正常） | 已修；排查手法见「坑 4」。先 `curl` 打后端 SSE 确认后端没问题是关键一步 |
+| 页面永远停在「运行中」，按钮仍是「规划中…」 | 连接被反向代理按 60 秒超时掐断 | 见「单次规划比较慢」；已加 SSE 心跳 + 中断检测，重试一次通常能过 |
 | 线上报错但看不到日志 | 沙箱日志拿不到 | 打 `GET /api/debug`，里面有最近一次异常堆栈 |
 
 ### Q：能不能直接复用 WorkBuddy 的模型能力，不自己的 API Key？

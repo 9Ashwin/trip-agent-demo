@@ -36,7 +36,7 @@ def is_mock_mode() -> bool:
     """没配模型 Key → 自动进入演示模式，保证一定能看到效果。"""
     if os.getenv("DEMO_MODE", "").lower() in ("1", "true", "yes"):
         return True
-    return not os.getenv("LLM_API_KEY")
+    return not llm_config.has_key()
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,7 @@ HEARTBEAT_SECONDS = float(os.getenv("HEARTBEAT_SECONDS", "10"))
 # 线上沙箱没法看日志，把异常留在内存里是唯一能远程拿到原因的办法。
 # 实现放在 errlog.py，agent 模块也会往里写，这里只做转发。
 import errlog
+import llm_config
 
 
 def _record_error(e: BaseException):
@@ -117,17 +118,21 @@ def index():
 
 @app.route("/api/status")
 def status():
+    llm = llm_config.summary()
     return jsonify(
         {
             "mock": is_mock_mode(),
-            "model": os.getenv("LLM_MODEL", "deepseek-chat"),
+            # 前端顶栏展示用：网关 + 实际模型名
+            "provider": llm["provider"],
+            "provider_label": llm["provider_label"],
+            "model": llm["model"],
             "search": os.getenv("SEARCH_PROVIDER", "bing"),
-            "has_llm_key": bool(os.getenv("LLM_API_KEY")),
+            "has_llm_key": llm["has_key"],
             "has_search_key": bool(
                 os.getenv("TAVILY_API_KEY") or os.getenv("BOCHA_API_KEY")
             ),
             "search_keyless": os.getenv("SEARCH_PROVIDER", "bing").lower()
-            in ("bing", "auto", "duckduckgo"),
+            in ("bing", "auto"),
             "agent_impl": AGENT_IMPL,
             "rate_limit": RATE_LIMIT,
         }
@@ -150,6 +155,9 @@ def debug():
         "agent_impl": AGENT_IMPL,
         "rate_limit": RATE_LIMIT,
     }
+    # 网关与模型名要一起报出来：模型名写错（尤其是把 opencode 的
+    # deepseek-v4.1-flash 填给 DeepSeek 官方）会直接 400，这里一眼能看出
+    info.update(llm_config.summary())
 
     for pkg in ("langchain", "langchain-core", "langgraph", "langchain-openai", "openai"):
         try:
@@ -274,7 +282,9 @@ if __name__ == "__main__":
     mode = "演示模式（无需 API Key）" if is_mock_mode() else "真实模式（已接入大模型）"
     print(f"  运行模式：  {mode}")
     if not is_mock_mode():
-        print(f"  模型：      {os.getenv('LLM_MODEL', 'deepseek-chat')}")
+        llm = llm_config.summary()
+        print(f"  网关：      {llm['provider_label']} ({llm['provider']})")
+        print(f"  模型：      {llm['model']}")
         print(f"  搜索提供方：{os.getenv('SEARCH_PROVIDER', 'bing')}")
         print(f"  Agent 实现：{AGENT_IMPL}")
     print("=" * 56 + "\n")
