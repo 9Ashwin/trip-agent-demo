@@ -214,6 +214,45 @@ resp = await llm.ainvoke(
 连不上的 DDG 接口。所以本项目自己写了 `web_search` 工具（免 Key 必应），再用
 `@tool` 挂给 LangChain——**这才是「不用搜索 Key 的 LangChain」的正确姿势**。
 
+#### 坑 4：前端「永远停在 运行中 · Ns」——一个被静默吞掉的 TypeError
+
+**症状**：点「开始规划」，徽章显示「运行中 · 5s」，然后永远不动；按钮会自己变回
+「开始规划（联网抓取）」，但右侧结果区一片空白，**连错误提示都没有**。
+后端日志一切正常（`curl` 直接打 `/api/plan` 能拿到完整方案），所以特别容易误判成
+「用户没等够时间」。
+
+**根因**：`addStep()` 创建步骤节点时**忘了创建 `.mark` 元素**（就是那个转圈点/对勾），
+而后续每一处收尾代码都在写：
+
+```js
+running.querySelector('.mark').textContent = '✓';   // ← null，直接抛 TypeError
+```
+
+于是第一个 `step` 事件一进来就抛异常，异常又正好发生在 `catch` / `finally` 块内部
+（`markAllDone()` 和 `finally` 里都在写 `.mark`），**二次抛出的异常逃出 async 函数，
+变成 unhandledrejection 被浏览器静默吞掉**——所以页面上什么都看不到。
+
+**两个教训**：
+
+1. **DOM 查询要空值安全**。所有收尾统一走一个 `finish(el)` 帮助函数，拿不到 `.mark` 就跳过。
+2. **async 事件处理函数必须挂全局兜底**，否则错误永远不可见：
+
+```js
+window.addEventListener('unhandledrejection', e => surfaceFatal((e.reason||{}).message));
+window.addEventListener('error', e => surfaceFatal(e.message));
+```
+
+**排查手法**（这次就是靠它定位的）：不要看截图猜，直接读真实 DOM——
+
+```js
+document.querySelector('#steps .step').outerHTML
+// 期望 <div class="step run"><span class="mark"></span><span class="txt">…</span></div>
+// 实际 <div class="step">第 1 轮：正在思考需要查什么…</div>   ← 没有 .mark，破案
+```
+
+配合每 4 秒轮询一次「徽章 / 步骤数 / 结果字数 / 按钮文案」四元组，
+一眼就能看出「按钮已复位但结果为空」这个自相矛盾的状态。
+
 ---
 
 ## 四、接上真实数据（4 步）
