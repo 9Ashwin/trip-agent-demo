@@ -85,11 +85,13 @@ def status():
         {
             "mock": is_mock_mode(),
             "model": os.getenv("LLM_MODEL", "deepseek-chat"),
-            "search": os.getenv("SEARCH_PROVIDER", "auto"),
+            "search": os.getenv("SEARCH_PROVIDER", "bing"),
             "has_llm_key": bool(os.getenv("LLM_API_KEY")),
             "has_search_key": bool(
                 os.getenv("TAVILY_API_KEY") or os.getenv("BOCHA_API_KEY")
             ),
+            "search_keyless": os.getenv("SEARCH_PROVIDER", "bing").lower()
+            in ("bing", "auto", "duckduckgo"),
             "rate_limit": RATE_LIMIT,
         }
     )
@@ -179,6 +181,6 @@ if __name__ == "__main__":
     print(f"  运行模式：  {mode}")
     if not is_mock_mode():
         print(f"  模型：      {os.getenv('LLM_MODEL', 'deepseek-chat')}")
-        print(f"  搜索提供方：{os.getenv('SEARCH_PROVIDER', 'auto')}")
+        print(f"  搜索提供方：{os.getenv('SEARCH_PROVIDER', 'bing')}")
     print("=" * 56 + "\n")
     app.run(host=host, port=port, debug=False, threaded=True)

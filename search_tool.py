@@ -4,10 +4,12 @@
 这是整个 Demo 里最关键的 30 行 —— 也是「网页自己抓不了数据」这句话的答案：
 真正联网的动作发生在这台后端机器上，不是浏览器里。
 
+★ 默认方案：必应（bing）—— 完全不需要任何 API Key，一行配置即可联网。
+
 支持五种后端，按优先级自动选择：
-  1. tavily   —— 专为 AI Agent 设计的搜索 API，免费额度 1000 次/月（推荐）
-  2. bocha    —— 博查搜索，国内可直连，按次计费（国内首选）
-  3. bing     —— 【免 API Key】抓取 cn.bing.com 搜索结果页，国内可用（详见下方说明）
+  1. bing     —— 【默认·免 API Key】抓取 cn.bing.com 搜索结果页，国内可用（推荐）
+  2. tavily   —— 专为 AI Agent 设计的搜索 API，免费额度 1000 次/月（进阶可选，质量更高）
+  3. bocha    —— 博查搜索，国内可直连，按次计费（进阶可选）
   4. duckduckgo —— 免注册兜底，但国内网络基本连不上，详见说明
   5. mock     —— 离线演示，返回假数据，让朋友零成本先看效果
 
@@ -51,8 +53,11 @@ def _strip_tags(s: str) -> str:
 
 
 def search(query: str, max_results: int = 5):
-    """统一入口：返回 {"provider": str, "results": [{"title","url","snippet"}]}"""
-    provider = os.getenv("SEARCH_PROVIDER", "auto").lower()
+    """统一入口：返回 {"provider": str, "results": [{"title","url","snippet"}]}
+
+    默认走免 Key 的必应；配置了 Tavily / 博查的 Key 时会优先用它们（质量更高）。
+    """
+    provider = os.getenv("SEARCH_PROVIDER", "bing").lower()
 
     if provider in ("auto", "tavily") and os.getenv("TAVILY_API_KEY"):
         try:
@@ -205,8 +210,8 @@ def _mock(query):
                 "title": f"[演示数据] {query}",
                 "url": "https://example.com/demo",
                 "snippet": (
-                    "这是演示模式返回的模拟搜索结果。配置 TAVILY_API_KEY 或 "
-                    "BOCHA_API_KEY 后，这里会变成真实的网页内容。"
+                    "这是演示模式返回的模拟搜索结果。默认方案（免 Key 必应）无需任何配置，"
+                    "只要能联网就会自动返回真实网页内容。"
                 ),
             }
         ],

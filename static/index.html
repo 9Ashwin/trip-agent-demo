@@ -345,7 +345,7 @@ const MD = (window.marked && typeof marked.parse === 'function')
 if (window.marked && window.marked.setOptions) marked.setOptions({ breaks:true, gfm:true });
 
 /* 模式检测 */
-const PROV_LABEL = { tavily:'Tavily', bocha:'博查', duckduckgo:'DuckDuckGo', mock:'演示数据' };
+const PROV_LABEL = { bing:'必应搜索(免Key)', tavily:'Tavily', bocha:'博查', duckduckgo:'DuckDuckGo', mock:'演示数据' };
 fetch('/api/status').then(r=>r.json()).then(s=>{
   const b = $('modeBadge');
   if (s.mock) {
@@ -398,7 +398,7 @@ function markAllDone(){
   });
 }
 
-const PROV_NAME = { tavily:'Tavily', bocha:'博查', duckduckgo:'DuckDuckGo', mock:'演示数据' };
+const PROV_NAME = { bing:'必应', tavily:'Tavily', bocha:'博查', duckduckgo:'DuckDuckGo', mock:'演示数据' };
 
 $('goBtn').addEventListener('click', async ()=>{
   const btn = $('goBtn');
