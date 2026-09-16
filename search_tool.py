@@ -4,25 +4,50 @@
 这是整个 Demo 里最关键的 30 行 —— 也是「网页自己抓不了数据」这句话的答案：
 真正联网的动作发生在这台后端机器上，不是浏览器里。
 
-支持四种后端，按优先级自动选择：
+支持五种后端，按优先级自动选择：
   1. tavily   —— 专为 AI Agent 设计的搜索 API，免费额度 1000 次/月（推荐）
   2. bocha    —— 博查搜索，国内可直连，按次计费（国内首选）
-  3. duckduckgo —— 免注册兜底，但国内网络基本连不上，详见下方说明
-  4. mock     —— 离线演示，返回假数据，让朋友零成本先看效果
+  3. bing     —— 【免 API Key】抓取 cn.bing.com 搜索结果页，国内可用（详见下方说明）
+  4. duckduckgo —— 免注册兜底，但国内网络基本连不上，详见说明
+  5. mock     —— 离线演示，返回假数据，让朋友零成本先看效果
 
-⚠️ 关于 DuckDuckGo（重要）
-  1) 网络：duckduckgo.com 与 api.duckduckgo.com 在中国大陆无法访问，
-     实测直接返回连接失败（curl 得到 000）。所以它在国内等于不可用。
-  2) 即便能连上，这里用的是 DuckDuckGo Instant Answer API —— 它不是搜索引擎，
-     而是「百科摘要」接口：只返回某词条的 Abstract 和 RelatedTopics。
-     对本项目这种查询（「广州 昆明 机票 9月30日 价格」）通常返回空结果。
-  结论：把 DDG 当兜底可以，别指望它出结果。要真实效果请配 Tavily 或博查。
+⚠️ 关于「免 Key 方案」的取舍（重要）
+  真正"不用搜索 API"的可行做法只有「抓搜索结果页」，本项目内置了必应：
+
+  必应（bing）：实测可用 ✅
+    - cn.bing.com/search 直接返回 HTML，国内可访问，无需任何 Key
+    - 解析 <li class="b_algo"> 块可稳定拿到 标题/URL/摘要，质量不错
+    - 代价：① 属于网页抓取，对方改版就可能失效，无任何 SLA
+            ② 高频调用会被限流或弹验证码
+            ③ 不符合对方使用条款，别用于正式产品
+    - 结论：学习、Demo、个人低频使用完全够用；线上服务请用 Tavily / 博查
+
+  DuckDuckGo（duckduckgo）：实测不可用 ❌
+    1) 网络：duckduckgo.com 与 api.duckduckgo.com 在中国大陆无法访问，
+       实测直接返回连接失败（curl 得到 000）
+    2) 接口性质：用的是 Instant Answer API —— 它不是搜索引擎，
+       而是「百科摘要」接口：只返回某词条的 Abstract 和 RelatedTopics。
+       对本项目这种查询（「广州 昆明 机票 9月30日 价格」）通常返回空结果。
+
+  百度 / 维基百科：实测不可用（百度返回反爬页，维基被网络限制）
 """
 
+import html
 import os
+import re
+
 import requests
 
 TIMEOUT = 20
+
+UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+)
+
+
+def _strip_tags(s: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", s)).strip()
 
 
 def search(query: str, max_results: int = 5):
@@ -45,6 +70,14 @@ def search(query: str, max_results: int = 5):
                 raise
             print(f"[search] bocha 失败，降级：{e}")
 
+    if provider in ("auto", "bing"):
+        try:
+            r = _bing(query, max_results)
+            if r["results"]:
+                return r
+        except Exception as e:
+            print(f"[search] bing 失败，降级：{e}")
+
     if provider in ("auto", "duckduckgo"):
         try:
             r = _duckduckgo(query)
@@ -54,6 +87,35 @@ def search(query: str, max_results: int = 5):
             print(f"[search] duckduckgo 失败，降级：{e}")
 
     return _mock(query)
+
+
+def _bing(query, max_results):
+    """免 API Key：抓取必应搜索结果页并解析。"""
+    r = requests.get(
+        "https://cn.bing.com/search",
+        params={"q": query, "setlang": "zh-CN", "count": max(max_results, 10)},
+        headers={"User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9"},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+
+    out = []
+    for block in re.findall(r'<li class="b_algo".*?</li>', r.text, re.S):
+        m = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+        if not m:
+            continue
+        p = re.search(r"<p[^>]*>(.*?)</p>", block, re.S)
+        out.append(
+            {
+                "title": _strip_tags(m.group(2))[:120],
+                "url": html.unescape(m.group(1)),
+                "snippet": _strip_tags(p.group(1))[:400] if p else "",
+            }
+        )
+        if len(out) >= max_results:
+            break
+
+    return {"provider": "bing", "results": out}
 
 
 def _tavily(query, max_results):

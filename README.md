@@ -106,6 +106,24 @@ cd trip-agent-demo
 
 ## 四、接上真实数据（4 步）
 
+> ### 👉 推荐组合（给想直接能用的人）
+>
+> | 场景 | 模型 | 搜索 | 成本 |
+> |---|---|---|---|
+> | **最省事、最稳**（推荐） | **DeepSeek 官方** `deepseek-chat` | Tavily 免费额度 | 模型按量约 ¥0.7/百万 token，几乎可忽略 |
+> | **零成本** | 智谱 `glm-4-flash`（永久免费） | **必应抓取（免 Key）** | **0 元**，代价是稳定性差 |
+>
+> **DeepSeek 官方的最简配置**（复制进 `.env` 即可）：
+>
+> ```
+> LLM_API_KEY=sk-你的deepseek密钥
+> LLM_BASE_URL=https://api.deepseek.com
+> LLM_MODEL=deepseek-chat
+> ```
+>
+> 注册地址：https://platform.deepseek.com （新用户送免费额度）
+> 优点：**原生支持 function calling**，中文强，OpenAI 接口兼容，零适配成本 —— 这是本项目的默认配置。
+
 ### 第 1 步：拿一个大模型 Key
 
 **想零成本？直接用永久免费的 GLM-4-Flash：**
@@ -142,7 +160,55 @@ GLM-4-Flash、DeepSeek、GPT-4o-mini、Qwen 系列都支持；一些小模型或
 
 > 其余平台只要兼容 OpenAI 接口格式，改 `LLM_BASE_URL` 和 `LLM_MODEL` 就行。
 
-### 第 2 步：拿一个搜索 Key（二选一）
+#### 方案 D：OpenCode Go 套餐（$10/月，开源编码模型）
+
+[OpenCode Go](https://opencode.ai/docs/go/) 是订阅制的模型网关，走 `/zen/go/v1`。
+它有两个**额外要求**（不加会被拒），本项目已用环境变量支持：
+
+```
+LLM_API_KEY=你的opencode key
+LLM_BASE_URL=https://opencode.ai/zen/go/v1
+LLM_MODEL=deepseek-v4.1-flash
+LLM_USER_AGENT=trip-agent-demo/1.0      # 必须标识自己的客户端，不能用通用 SDK 名
+LLM_SESSION_HEADER=x-opencode-session   # 每段会话要发稳定 session id
+```
+
+**两个容易踩的坑：**
+1. **模型 ID 必须是带小数点的** —— `deepseek-v4.1-flash`（DeepSeek V4.1 Flash）和
+   `deepseek-v4-flash`（DeepSeek V4 Flash）是**两个不同的模型**，写错了会 400/404
+2. **缺 `x-opencode-session` 会直接 400**：`MissingSessionID ... cannot be routed efficiently`。
+   `agent.py` 里每次请求会生成一个 uuid 作为会话 id
+
+> ⚠️ OpenCode Go 官方说明它「面向 OpenCode 等编码智能体，会监测异常流量」。
+> 拿它跑通用网站属于超出设计用途，**自行评估风险**，别做公开服务。
+> 当前可用模型列表：`curl https://opencode.ai/zen/go/v1/models`
+
+### 第 2 步：搜索 —— 三种选择
+
+#### 🟢 选择 A：**完全不要搜索 Key**（零成本）
+
+本项目内置了「抓取必应搜索结果页」的实现，**一个 Key 都不用配**：
+
+```
+SEARCH_PROVIDER=bing
+TAVILY_API_KEY=
+```
+
+实测可用：单次查询稳定返回 5 条真实结果（标题 + 链接 + 摘要）。
+用这种方式跑完整流程，能拿到 **24 次搜索 / 120 条结果 / 60 个来源**，方案质量可用。
+
+**代价要清楚：**
+
+| 方面 | 说明 |
+|---|---|
+| 稳定性 | 属于网页抓取，**必应改版就可能失效**，没有任何 SLA |
+| 限流 | 高频调用会被限流或弹验证码 |
+| 条款 | 不符合对方使用条款，**别用于正式产品** |
+| 精准度 | 不如 Tavily，查「机票价格」这类交易型需求时结果偏泛 |
+
+> **结论**：学习、Demo、个人低频使用完全够用；线上服务请用选择 B。
+
+#### 🟡 选择 B：Tavily / 博查（推荐）
 
 | 提供方 | 特点 | 地址 |
 |---|---|---|
@@ -154,14 +220,23 @@ SEARCH_PROVIDER=tavily
 TAVILY_API_KEY=tvly-你的key
 ```
 
-> **关于 DuckDuckGo（不要指望它）**
-> 代码里有 DDG 作为免 Key 兜底，但实测有双重问题：
-> 1. **网络不通** —— `duckduckgo.com` 与 `api.duckduckgo.com` 在国内无法访问，实测连接直接失败
-> 2. **接口性质不对** —— 用的是 Instant Answer API，它是「百科摘要」接口（返回词条 Abstract
->    和 RelatedTopics），**不是搜索引擎**。对「广州 昆明 机票 9月30日 价格」这类查询
->    通常返回空结果
->
-> 所以它只能算「聊胜于无」，要真实效果请配 Tavily 或博查。
+#### ❌ 选择 C：DuckDuckGo（实测不可用，别再试了）
+
+代码里保留了 DDG 兜底，但实测有**双重问题**：
+
+1. **网络不通** —— `duckduckgo.com` 与 `api.duckduckgo.com` 在国内无法访问，实测连接直接失败（`curl` 得到 `000`）。注意不是沙箱问题：同一环境下 `tavily.com` 返回 302、`baidu.com` 返回 200，说明是被针对性阻断。
+2. **接口性质不对** —— 免 Key 只能用 Instant Answer API，它是「百科摘要」接口（返回词条 Abstract 和 RelatedTopics），**不是搜索引擎**。对「广州 昆明 机票 9月30日 价格」这类查询通常返回空。
+
+> **为什么「用 langchain 之类的库」解决不了？**
+> LangChain 本身不是搜索引擎，它只是**包装器**。它提供的搜索工具底层要么需要 API Key
+> （Tavily / Serper / Bing 官方 API），要么就是同一个 DDG 接口
+> （`DuckDuckGoSearchRun`）。真正免 Key 且国内可用的只有：抓取搜索结果页（本项目的必应方案）
+> 或自建 SearXNG 实例。
+
+#### 关于百度 / 维基百科
+
+实测均不可用：百度搜索页返回反爬页面（HTTP 200 但只有 1.4KB 空壳），维基百科被网络限制。
+所以**免 Key 方案里，必应是目前唯一可用的**。
 
 ### 第 3 步：重启
 

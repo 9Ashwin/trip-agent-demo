@@ -13,6 +13,7 @@ Agent 大脑：调用大模型 + 让模型自己决定何时联网搜索。
 
 import json
 import os
+import uuid
 
 from openai import OpenAI
 
@@ -71,10 +72,26 @@ TOOLS = [
 MAX_ROUNDS = 6
 
 
-def _client():
+def _client(session_id: str = ""):
+    """构造大模型客户端。
+
+    有些网关（如 OpenCode Go）除了 API Key 之外还有额外要求，用环境变量配置：
+      LLM_USER_AGENT     —— 标识自己的客户端，不要用通用 SDK 名（OpenCode Go 明确要求）
+      LLM_SESSION_HEADER —— 需要为每段会话发送稳定 session id 时，填头名称
+                            （OpenCode Go 是 x-opencode-session）
+    """
+    headers = {}
+    ua = os.getenv("LLM_USER_AGENT")
+    if ua:
+        headers["User-Agent"] = ua
+    session_header = os.getenv("LLM_SESSION_HEADER")
+    if session_header:
+        headers[session_header] = session_id or str(uuid.uuid4())
+
     return OpenAI(
         api_key=os.getenv("LLM_API_KEY"),
         base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
+        default_headers=headers or None,
     )
 
 
@@ -93,7 +110,9 @@ def build_user_message(p: dict) -> str:
 
 def run_agent(payload: dict, emit):
     """emit(event_dict) 会把进度实时推给前端。返回最终 Markdown。"""
-    client = _client()
+    # 每段会话一个稳定 id，便于网关做路由与 prompt 缓存
+    session_id = str(uuid.uuid4())
+    client = _client(session_id)
     model = os.getenv("LLM_MODEL", "deepseek-chat")
 
     messages = [
