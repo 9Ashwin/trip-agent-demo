@@ -305,26 +305,40 @@ def run_agent(payload: dict, emit):
 
     与 agent.py 的 run_agent 签名/返回完全一致，可互换。
     """
-    # 每段会话一个稳定 id，便于网关做路由与 prompt 缓存
-    session_id = str(uuid.uuid4())
-    llm = _build_llm(session_id)
-
     used_sources: list = []
     user_msg = build_user_message(payload)
 
-    # history 放在外面，异常路径也能拿到已经搜到的全部资料
-    state = {"history": [HumanMessage(content=user_msg)]}
+    retries = int(os.getenv("AGENT_RETRIES", "1"))
+    markdown = ""
 
-    try:
-        markdown = asyncio.run(_arun(llm, user_msg, emit, used_sources, state))
-    except Exception as e:
-        # LangGraph 超递归上限 / 网关抖动，都不该让用户看到空白页，
-        # 但兜底也必须带上下文，否则等于白搜
-        print(f"[agent_langchain] 主循环异常，走兜底：{type(e).__name__}: {e}")
-        # 线上看不到日志，记进 errlog 供 /api/debug 取
-        errlog.record(e, where="agent_langchain._arun 主循环")
-        emit({"type": "step", "text": "搜索中途中断，正在基于已获得的信息输出…"})
-        markdown = asyncio.run(_force_final(llm, state["history"]))
+    # 最多尝试 1 + retries 次。
+    #
+    # 为什么要重试：实测模型网关（OpenCode Go）会偶发瞬时失败 ——
+    # 表现为第一轮模型调用在 1 秒内抛异常，一次搜索都没跑，
+    # 然后就会输出一份「凭空写的」方案（来源 0 个）。5 次里能撞上 2 次。
+    # 这种情况下**原样重试一次**几乎都能成功，比直接降级成兜底好得多。
+    for attempt in range(1, retries + 2):
+        # 每次尝试用新的 session id：网关要求会话隔离，卡住的会话换一个更稳
+        llm = _build_llm(str(uuid.uuid4()))
+        state = {"history": [HumanMessage(content=user_msg)]}
+
+        try:
+            markdown = asyncio.run(_arun(llm, user_msg, emit, used_sources, state))
+            break
+        except Exception as e:
+            print(f"[agent_langchain] 主循环异常(第 {attempt} 次)：{type(e).__name__}: {e}")
+            # 线上看不到日志，记进 errlog 供 /api/debug 取
+            errlog.record(e, where=f"agent_langchain._arun 主循环(第 {attempt} 次)")
+
+            # 一次搜索都还没做 → 大概率是网关抖动，原样重试
+            if attempt <= retries and not used_sources:
+                emit({"type": "step", "text": "模型这次没响应，正在重试…"})
+                continue
+
+            # 已经搜到东西了就不重来（重来要再花几十秒），带着已有资料收尾
+            emit({"type": "step", "text": "搜索中途中断，正在基于已获得的信息输出…"})
+            markdown = asyncio.run(_force_final(llm, state["history"]))
+            break
 
     if not markdown:
         markdown = "（模型没有返回内容，请重试一次）"
