@@ -1,4 +1,19 @@
+# Web 框架
 flask>=3.0
-openai>=1.30
+
+# 联网搜索（抓取必应结果页用到）
 requests>=2.31
+
+# 配置
 python-dotenv>=1.0
+
+# ---- LangChain 版 Agent（默认实现，见 agent_langchain.py）----
+# 注意必须 >=1.0：v1 的 create_agent 才是新 API，
+# 旧版的 AgentExecutor / create_tool_calling_agent 在 v1 已移除
+langchain>=1.0
+langchain-core>=1.0
+langchain-openai>=1.0
+
+# ---- 原生 SDK 版 Agent（可选后备，见 agent.py）----
+# 设 AGENT_IMPL=native 时会用到；agent_langchain 底层也依赖它
+openai>=1.30

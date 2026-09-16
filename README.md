@@ -36,6 +36,7 @@ cd trip-agent-demo
 | [一、先破除一个误解](#一先破除一个误解) | 为什么「改成网页」不能让它联网 |
 | [二、正确的架构](#二正确的架构长什么样) | 前端 / 后端 / 外部服务的分工 |
 | [三、核心机制](#三最核心的机制工具调用function-calling) | Function Calling 循环 |
+| [三·五、两种写法](#三·五同一件事的两种写法langchain-vs-原生-sdk) | LangChain vs 原生 SDK（含两个实测坑） |
 | [四、接上真实数据](#四接上真实数据4-步) | 免费模型 + 免 Key 搜索 |
 | [五、文件说明](#五文件说明) | 每个文件干什么 |
 | [六、用 WorkBuddy 加速](#六想用-workbuddy-加速这套东西) | 怎么下需求给 AI |
@@ -101,9 +102,68 @@ cd trip-agent-demo
 豆包智能体、扣子 Bot、以及各种「联网 AI」底层都是这个套路。
 
 代码见：
-- `agent.py` → 第 47-141 行，工具定义 + Agent 循环
+- `agent_langchain.py` → **默认实现**，LangChain v1 `create_agent` 版
+- `agent.py` → 后备实现，原生 OpenAI SDK 手写版（同样的循环，但不依赖框架）
 - `search_tool.py` → 真正发 HTTP 请求去搜索的那 30 行
 - `app.py` → Flask 接口，把每一步用 SSE 实时推给前端
+
+---
+
+## 三·五、同一件事的两种写法（LangChain vs 原生 SDK）
+
+上面那个循环，项目里给了**两份等价实现**，用 `AGENT_IMPL` 一键切换：
+
+```bash
+AGENT_IMPL=langchain   # 默认
+AGENT_IMPL=native      # 换成原生 SDK 版
+```
+
+两者 `run_agent(payload, emit)` 的签名和返回值完全一致，所以 `app.py` 和前端**一行都不用改**。
+
+**写法的差别：**
+
+| 环节 | 原生 SDK 版（`agent.py`） | LangChain 版（`agent_langchain.py`） |
+|---|---|---|
+| 循环 | 自己写 `for round_no in range(1, 7)` | `create_agent()` 生成 LangGraph 图，框架自己循环 |
+| 工具定义 | 手写 24 行 JSON Schema 字典 | `@tool` 装饰器读函数签名自动生成 |
+| 消息管理 | 自己 `messages.append({"role":"tool", ...})` | 框架维护 `state["messages"]` |
+| 何时停止 | 自己判断 `if not msg.tool_calls` | 框架判断停止条件 |
+| 依赖 | 只要 `openai` | 需要 `langchain` + `langgraph` |
+| 可控性 | 每一行都在自己手里，容易调试 | 少写代码，但轮数上限等要自己补 |
+
+**结论：代码量上 LangChain 版更少**（工具定义和消息管理都交给框架了），
+但**框架不是白拿的**——下面这两个坑是实测踩出来的，换 LangChain 前务必知道：
+
+#### 坑 1：`create_agent` 没有 `max_iterations`
+
+老版 `AgentExecutor` 可以直接 `max_iterations=6` 限轮数，v1 的 `create_agent` **没有这个参数**。
+不自己数轮数的话，模型会一直搜下去，最后撞上 LangGraph 的 `recursion_limit` 抛
+`GraphRecursionError`。本项目在 `astream` 循环里自己计数，到 `MAX_ROUNDS` 就跳出。
+
+#### 坑 2：兜底分支必须带上下文，否则等于白搜
+
+这是踩出来的真实事故：第一版里，达到轮数上限后我用**一条全新的空消息**去问模型要最终方案，
+结果前面 145 条搜索结果**全部被丢掉**，模型于是回答：
+
+> 「当前对话环境未提供联网搜索工具，我不能假装已抓取实时票价……」
+
+用户看到一个「明明搜了 29 次、却说自己不能联网」的方案。
+
+**正确做法**（见 `_force_final` 与 `_sanitize_for_final`）：
+把已经搜索到的**完整历史**一起喂回去，并且把带 `tool_calls` 的消息压成纯对话形式
+（否则收尾时不给 tools，部分网关会因为「有工具调用记录却没有工具定义」直接报错）。
+
+```python
+# 收尾调用：带完整历史，不带工具
+resp = await llm.ainvoke(
+    _sanitize_for_final(history) + [HumanMessage(content=FINALIZE_HINT)]
+)
+```
+
+顺带一句：**LangChain 本身不是搜索引擎**，它只是编排框架。它自带的
+`TavilySearchResults` / `DuckDuckGoSearchRun` 底层要么要 API Key，要么就是那个国内
+连不上的 DDG 接口。所以本项目自己写了 `web_search` 工具（免 Key 必应），再用
+`@tool` 挂给 LangChain——**这才是「不用搜索 Key 的 LangChain」的正确姿势**。
 
 ---
 
@@ -269,7 +329,8 @@ TAVILY_API_KEY=tvly-你的key
 | 文件 | 干什么的 |
 |---|---|
 | `app.py` | Flask 服务：托管页面 + `/api/plan` 接口 + SSE 实时推送 |
-| `agent.py` | **核心**：Agent 循环，让大模型自己决定何时联网 |
+| `agent_langchain.py` | **核心（默认）**：LangChain v1 `create_agent` 版 Agent 循环 |
+| `agent.py` | **核心（后备）**：原生 OpenAI SDK 手写版 Agent 循环 |
 | `search_tool.py` | 搜索工具层，默认免 Key 必应，五路自动降级 |
 | `mock_agent.py` | 演示模式，无需 Key 也能跑通全流程 |
 | `static/index.html` | 前端工作台（单文件，无框架依赖） |

@@ -40,6 +40,23 @@ def is_mock_mode() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Agent 实现切换
+#   langchain（默认）—— LangChain v1 的 create_agent，见 agent_langchain.py
+#   native          —— 原生 OpenAI SDK 手写循环，见 agent.py
+# 两者 run_agent(payload, emit) 签名与返回完全一致，可随时互换。
+# ---------------------------------------------------------------------------
+AGENT_IMPL = os.getenv("AGENT_IMPL", "langchain").lower()
+
+
+def agent_module():
+    if AGENT_IMPL == "native":
+        import agent as mod
+    else:
+        import agent_langchain as mod
+    return mod
+
+
+# ---------------------------------------------------------------------------
 # 访问频率限制
 # 一旦把真实 Key 部署到公网，任何拿到链接的人都能消耗你的额度。
 # 这里按 IP 做简单限流兜底（进程内存，单实例够用；多实例需换 Redis）。
@@ -92,6 +109,7 @@ def status():
             ),
             "search_keyless": os.getenv("SEARCH_PROVIDER", "bing").lower()
             in ("bing", "auto", "duckduckgo"),
+            "agent_impl": AGENT_IMPL,
             "rate_limit": RATE_LIMIT,
         }
     )
@@ -127,9 +145,7 @@ def plan():
 
                     result["md"], result["src"] = mock_agent.run_mock(payload, emit)
                 else:
-                    import agent
-
-                    result["md"], result["src"] = agent.run_agent(payload, emit)
+                    result["md"], result["src"] = agent_module().run_agent(payload, emit)
             except Exception as e:
                 traceback.print_exc()
                 result["err"] = str(e)
@@ -182,5 +198,6 @@ if __name__ == "__main__":
     if not is_mock_mode():
         print(f"  模型：      {os.getenv('LLM_MODEL', 'deepseek-chat')}")
         print(f"  搜索提供方：{os.getenv('SEARCH_PROVIDER', 'bing')}")
+        print(f"  Agent 实现：{AGENT_IMPL}")
     print("=" * 56 + "\n")
     app.run(host=host, port=port, debug=False, threaded=True)
