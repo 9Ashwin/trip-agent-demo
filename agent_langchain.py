@@ -33,6 +33,7 @@ Agent 大脑（LangChain 版）。
 import asyncio
 import json
 import os
+import threading
 import uuid
 
 from langchain.agents import create_agent
@@ -131,6 +132,47 @@ def _build_llm(session_id: str = ""):
         temperature=0.3,
         default_headers=headers or None,
     )
+
+
+# ---------------------------------------------------------------------------
+# 常驻事件循环
+#
+# ⚠️ 这里是本项目最容易踩、也最难查的一个坑，改动前务必读完。
+#
+# 症状：同一个进程里，**第 1 个请求正常，之后每个请求都在 1 秒内失败**。
+#       错误是 RuntimeError: Event loop is closed（在 model 任务里抛出）。
+#       表现到用户那里就是「第一批人能用，后面统统转圈」。
+#
+# 原因：底层 httpx / openai SDK 的**异步客户端是按参数全局缓存**的，
+#       它会把连接池绑在「第一次用到它的那个事件循环」上。
+#       而 asyncio.run() 的语义是「新建一个 loop，跑完就 close」。
+#       于是第 2 个请求复用了那个绑在已关闭 loop 上的客户端，立刻炸。
+#
+# 解法：整个进程只用一个常驻事件循环（跑在后台线程里），
+#       请求通过 run_coroutine_threadsafe 提交上去。loop 永不关闭，
+#       缓存客户端始终有效，同时也天然支持并发。
+#
+# 一句话：**这里绝对不要改回 asyncio.run()。**
+# ---------------------------------------------------------------------------
+_ASYNC_LOOP: asyncio.AbstractEventLoop | None = None
+_LOOP_LOCK = threading.Lock()
+
+
+def _get_loop() -> asyncio.AbstractEventLoop:
+    global _ASYNC_LOOP
+    with _LOOP_LOCK:
+        if _ASYNC_LOOP is None or _ASYNC_LOOP.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=loop.run_forever, daemon=True, name="agent-async-loop"
+            ).start()
+            _ASYNC_LOOP = loop
+        return _ASYNC_LOOP
+
+
+def _run_async(coro):
+    """把协程提交到常驻事件循环并等结果。替代 asyncio.run()。"""
+    return asyncio.run_coroutine_threadsafe(coro, _get_loop()).result()
 
 
 def build_user_message(p: dict) -> str:
@@ -323,7 +365,7 @@ def run_agent(payload: dict, emit):
         state = {"history": [HumanMessage(content=user_msg)]}
 
         try:
-            markdown = asyncio.run(_arun(llm, user_msg, emit, used_sources, state))
+            markdown = _run_async(_arun(llm, user_msg, emit, used_sources, state))
             break
         except Exception as e:
             print(f"[agent_langchain] 主循环异常(第 {attempt} 次)：{type(e).__name__}: {e}")
@@ -337,7 +379,7 @@ def run_agent(payload: dict, emit):
 
             # 已经搜到东西了就不重来（重来要再花几十秒），带着已有资料收尾
             emit({"type": "step", "text": "搜索中途中断，正在基于已获得的信息输出…"})
-            markdown = asyncio.run(_force_final(llm, state["history"]))
+            markdown = _run_async(_force_final(llm, state["history"]))
             break
 
     if not markdown:
