@@ -55,21 +55,12 @@ HEARTBEAT_SECONDS = float(os.getenv("HEARTBEAT_SECONDS", "10"))
 
 # 最近一次失败的信息，供 /api/debug 查看。
 # 线上沙箱没法看日志，把异常留在内存里是唯一能远程拿到原因的办法。
-_LAST_ERROR: dict = {}
+# 实现放在 errlog.py，agent 模块也会往里写，这里只做转发。
+import errlog
 
 
 def _record_error(e: BaseException):
-    import traceback as _tb
-
-    _LAST_ERROR.clear()
-    _LAST_ERROR.update(
-        {
-            "type": type(e).__name__,
-            "message": str(e),
-            "when": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "traceback": "".join(_tb.format_exception(e))[-3000:],
-        }
-    )
+    errlog.record(e, where="app.py")
 
 
 def agent_module():
@@ -184,7 +175,7 @@ def debug():
 
     info["heartbeat_seconds"] = HEARTBEAT_SECONDS
     info["max_search_rounds"] = os.getenv("MAX_SEARCH_ROUNDS", "(默认 15)")
-    info["last_error"] = dict(_LAST_ERROR) or None
+    info["last_error"] = errlog.last()
     return jsonify(info)
 
 

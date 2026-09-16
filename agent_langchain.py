@@ -41,6 +41,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 import search_tool
+import errlog
 
 SYSTEM_PROMPT = """你是【家庭旅行规划顾问】。
 
@@ -242,7 +243,8 @@ async def _force_final(llm, history: list) -> str:
         )
         return _text_of(resp)
     except Exception as e:
-        return f"生成方案失败：{e}"
+        errlog.record(e, where="agent_langchain._force_final 收尾调用")
+        return f"生成方案失败：{type(e).__name__}: {e}"
 
 
 async def _arun(llm, user_msg: str, emit, used_sources, state: dict) -> str:
@@ -319,6 +321,8 @@ def run_agent(payload: dict, emit):
         # LangGraph 超递归上限 / 网关抖动，都不该让用户看到空白页，
         # 但兜底也必须带上下文，否则等于白搜
         print(f"[agent_langchain] 主循环异常，走兜底：{type(e).__name__}: {e}")
+        # 线上看不到日志，记进 errlog 供 /api/debug 取
+        errlog.record(e, where="agent_langchain._arun 主循环")
         emit({"type": "step", "text": "搜索中途中断，正在基于已获得的信息输出…"})
         markdown = asyncio.run(_force_final(llm, state["history"]))
 
