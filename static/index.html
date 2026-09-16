@@ -411,7 +411,15 @@ $('goBtn').addEventListener('click', async ()=>{
   sb.style.display = 'inline-flex'; sb.className='badge live';
   sb.innerHTML = '<span class="dot"></span>运行中';
 
+  // 真实模式下这一步可能跑 30~90 秒，加个秒表让用户知道它还活着
+  const t0 = Date.now();
+  const timer = setInterval(()=>{
+    if(sb.classList.contains('live'))
+      sb.innerHTML = '<span class="dot"></span>运行中 · ' + Math.round((Date.now()-t0)/1000) + 's';
+  }, 1000);
+
   let running = null;
+  let gotFinal = false;   // 是否收到了 done / error —— 没收到说明连接被中途掐断
 
   try{
     const resp = await fetch('/api/plan', {
@@ -463,6 +471,7 @@ $('goBtn').addEventListener('click', async ()=>{
           }
         }
         else if(ev.type === 'done'){
+          gotFinal = true;
           markAllDone(); running = null;
           $('out').innerHTML = '<div class="md">' + MD.parse(ev.markdown||'') + '</div>';
           if(ev.sources && ev.sources.length){
@@ -471,14 +480,26 @@ $('goBtn').addEventListener('click', async ()=>{
               ev.sources.map(s=>'<li><a href="'+s.url+'" target="_blank" rel="noopener">'+(s.title||s.url)+'</a></li>').join('') +
               '</ol></div>';
           }
-          sb.className='badge'; sb.innerHTML='<span class="dot"></span>已完成';
+          sb.className='badge';
+          sb.innerHTML='<span class="dot"></span>已完成' + (ev.elapsed ? ' · ' + ev.elapsed + 's' : '');
         }
         else if(ev.type === 'error'){
+          gotFinal = true;
           markAllDone();
           $('out').innerHTML = '<div class="err"><b>出错了：</b>' + ev.message + '</div>';
           sb.className='badge mock'; sb.innerHTML='<span class="dot"></span>失败';
         }
       }
+    }
+
+    // 连接正常关闭，但一个结束事件都没收到 → 说明是被中途掐断的。
+    // 不处理的话，页面会永远停在「运行中」转圈，用户完全不知道发生了什么。
+    if(!gotFinal){
+      markAllDone();
+      $('out').innerHTML = '<div class="err"><b>连接中断：</b>后端没能返回完整结果。' +
+        '<br><span style="font-size:12px">常见原因：这次规划耗时超过了平台的单次请求上限（约 60 秒），连接被掐断。' +
+        '上面已经搜到的步骤是有效的，重试一次通常就能过；把目的地写简单一点也能显著加快。</span></div>';
+      sb.className='badge mock'; sb.innerHTML='<span class="dot"></span>中断';
     }
   }catch(err){
     markAllDone();
@@ -486,6 +507,7 @@ $('goBtn').addEventListener('click', async ()=>{
       '<br><span style="font-size:12px">请确认后端已启动（python app.py）</span></div>';
     sb.className='badge mock'; sb.innerHTML='<span class="dot"></span>失败';
   }finally{
+    clearInterval(timer);
     btn.disabled = false; btn.textContent = '开始规划（联网抓取）';
     if(running){ running.classList.remove('run'); running.querySelector('.mark').textContent='✓'; }
   }

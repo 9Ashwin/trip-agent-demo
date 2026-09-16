@@ -48,6 +48,30 @@ def is_mock_mode() -> bool:
 AGENT_IMPL = os.getenv("AGENT_IMPL", "langchain").lower()
 
 
+# SSE 心跳间隔（秒）。0 = 关闭。
+# 部署环境前面通常有反向代理，空闲太久会掐连接；这里定期发注释行保活。
+HEARTBEAT_SECONDS = float(os.getenv("HEARTBEAT_SECONDS", "10"))
+
+
+# 最近一次失败的信息，供 /api/debug 查看。
+# 线上沙箱没法看日志，把异常留在内存里是唯一能远程拿到原因的办法。
+_LAST_ERROR: dict = {}
+
+
+def _record_error(e: BaseException):
+    import traceback as _tb
+
+    _LAST_ERROR.clear()
+    _LAST_ERROR.update(
+        {
+            "type": type(e).__name__,
+            "message": str(e),
+            "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "traceback": "".join(_tb.format_exception(e))[-3000:],
+        }
+    )
+
+
 def agent_module():
     if AGENT_IMPL == "native":
         import agent as mod
@@ -58,11 +82,15 @@ def agent_module():
 
 # ---------------------------------------------------------------------------
 # 访问频率限制
-# 一旦把真实 Key 部署到公网，任何拿到链接的人都能消耗你的额度。
-# 这里按 IP 做简单限流兜底（进程内存，单实例够用；多实例需换 Redis）。
-# 设 RATE_LIMIT_PER_HOUR=0 可关闭。
+#
+# **默认关闭（0）**。想开启就设 RATE_LIMIT_PER_HOUR=20。
+#
+# 开启后任何拿到链接的人都会被限流，适合「把带 Key 的版本公开出去」的场景；
+# 给朋友试用 / 自己调试时反而碍事，所以出厂是关的。
+#
+# 实现说明：进程内存计数，单实例够用；多实例部署需换 Redis。
 # ---------------------------------------------------------------------------
-RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_HOUR", "20"))
+RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_HOUR", "0"))
 _rate_hits: dict = {}
 _rate_lock = threading.Lock()
 
@@ -115,6 +143,51 @@ def status():
     )
 
 
+@app.route("/api/debug")
+def debug():
+    """线上排查用：告出运行时环境与最近一次异常。
+
+    只暴露版本号与异常信息，不含任何 Key。
+    """
+    import platform
+    import sys
+    from importlib.metadata import version as _pkg_version
+
+    info = {
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "agent_impl": AGENT_IMPL,
+        "rate_limit": RATE_LIMIT,
+    }
+
+    for pkg in ("langchain", "langchain-core", "langgraph", "langchain-openai", "openai"):
+        try:
+            info[pkg] = _pkg_version(pkg)
+        except Exception as e:
+            info[pkg] = f"未安装/取版本失败: {type(e).__name__}"
+
+    # 真正跑一次模块加载，这才等价于 /api/plan 的路径
+    try:
+        info["agent_module"] = agent_module().__name__
+        info["agent_load"] = "ok"
+    except Exception as e:
+        info["agent_module"] = None
+        info["agent_load"] = f"{type(e).__name__}: {e}"
+
+    # 再往前一步：连 create_agent 能不能建起来也试一下
+    try:
+        from langchain.agents import create_agent
+
+        info["create_agent"] = "可导入" if callable(create_agent) else "不可调用"
+    except Exception as e:
+        info["create_agent"] = f"{type(e).__name__}: {e}"
+
+    info["heartbeat_seconds"] = HEARTBEAT_SECONDS
+    info["max_search_rounds"] = os.getenv("MAX_SEARCH_ROUNDS", "(默认 15)")
+    info["last_error"] = dict(_LAST_ERROR) or None
+    return jsonify(info)
+
+
 @app.route("/api/plan", methods=["POST"])
 def plan():
     if rate_limited():
@@ -132,6 +205,8 @@ def plan():
 
     def generate():
         queue = []
+        started = time.time()
+        last_ping = time.time()
 
         def emit(ev):
             queue.append(ev)
@@ -149,6 +224,8 @@ def plan():
             except Exception as e:
                 traceback.print_exc()
                 result["err"] = str(e)
+                # 留在内存里，便于线上排查（见 /api/debug）
+                _record_error(e)
             finally:
                 result["finished"] = True
 
@@ -159,6 +236,15 @@ def plan():
                 out, queue[:] = list(queue), []
                 for ev in out:
                     yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+            # SSE 心跳：长时间没有事件时（比如模型正在长思考 / 写最终方案），
+            # 用注释行保活。注释行以 ":" 开头，按 SSE 规范会被客户端忽略，
+            # 前端也只处理 "data:" 开头的行，所以不会污染 UI。
+            # 没有这个的话，中间的反向代理会按「空闲超时」把连接掐掉。
+            if time.time() - last_ping > HEARTBEAT_SECONDS:
+                last_ping = time.time()
+                yield ": ping\n\n"
+
             time.sleep(0.1)
 
         for ev in queue:
@@ -171,6 +257,7 @@ def plan():
                 "type": "done",
                 "markdown": result.get("md", ""),
                 "sources": result.get("src", []),
+                "elapsed": round(time.time() - started, 1),
             }
             yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n"
 
